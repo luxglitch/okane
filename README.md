@@ -1,5 +1,13 @@
 # Okane — Autonomous Kalshi Paper Trading Agent
 
+> **⚠ WORK IN PROGRESS — DO NOT USE WITH REAL MONEY**
+>
+> This project is experimental and under active development. Strategies are
+> unproven, logic bugs exist and are being found regularly, and nothing here
+> has been audited for financial soundness. It is a paper-trading research
+> tool only. Do not connect it to a live Kalshi account or treat any of its
+> signals, valuations, or outputs as financial advice.
+
 A fully autonomous, self-learning prediction market trading agent that simulates trades on [Kalshi.com](https://kalshi.com) using paper money. The system learns from its own wins and losses and surfaces all activity through a real-time dashboard.
 
 ---
