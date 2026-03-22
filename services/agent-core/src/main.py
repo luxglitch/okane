@@ -2,6 +2,14 @@
 Agent Core — main decision loop.
 
 Observe → Manage → Scan → Rank → Enhance → Risk Check → Execute → Record → Learn
+
+--- FIXES (2026-03-22) ---
+BUG 1 — NO stop-loss was using the wrong threshold.
+  Old: current_price > entry + (1 - entry) * 0.5
+       (triggers too early — e.g. entry=0.3 fired at YES>0.65 instead of YES>0.85)
+  Fix: effective_price < effective_entry * 0.5
+       (symmetric with YES logic; both sides now stop at exactly 50% drawdown
+        on their effective/directional price)
 """
 import asyncio
 import json
@@ -182,7 +190,7 @@ async def agent_loop(
                     if side == "yes" and current_price < entry * 0.5:
                         close_reason = "stop_loss"
                         close_price = current_price
-                    elif side == "no" and current_price > entry + (1 - entry) * 0.5:
+                    elif side == "no" and effective_price < effective_entry * 0.5:
                         close_reason = "stop_loss"
                         close_price = round(1.0 - current_price, 4)
 

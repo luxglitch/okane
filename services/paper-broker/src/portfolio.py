@@ -4,6 +4,14 @@ Core portfolio logic for paper trading.
 All financial state mutations go through this class.
 Every order placement and position close runs inside a single PostgreSQL
 transaction to prevent race conditions.
+
+--- FIXES (2026-03-22) ---
+BUG 2 — get_portfolio() returned stale positions_value frozen at entry cost
+         (sum(contracts * entry_price) from snapshot, never updated).
+  Fix: get_portfolio() now queries open positions and joins with the markets
+       table for current yes_bid / last_price, computing true mark-to-market
+       positions_value and unrealized_pnl on every call. Falls back to 0.5
+       if no current price is available.
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -62,15 +70,41 @@ class PaperPortfolio:
             snap = await conn.fetchrow(
                 "SELECT * FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1"
             )
-            open_count = await conn.fetchval(
-                "SELECT count(*) FROM positions WHERE status = 'open'"
+            # Join open positions with latest market snapshot for live MTM
+            open_positions = await conn.fetch(
+                """
+                SELECT p.contracts, p.side, p.entry_price,
+                       COALESCE(m.yes_bid, m.last_price) AS current_yes_price
+                FROM positions p
+                LEFT JOIN LATERAL (
+                    SELECT yes_bid, last_price
+                    FROM market_snapshots
+                    WHERE market_ticker = p.market_ticker
+                    ORDER BY ts DESC
+                    LIMIT 1
+                ) m ON true
+                WHERE p.status = 'open'
+                """
             )
             realized = await conn.fetchval(
                 "SELECT COALESCE(sum(pnl), 0) FROM positions WHERE status = 'closed'"
             )
 
         cash = float(snap["cash"]) if snap else settings.starting_balance
-        positions_value = float(snap["positions_value"]) if snap else 0.0
+
+        # Mark-to-market: value positions at current prices, not entry cost
+        positions_value = 0.0
+        unrealized_pnl = 0.0
+        for pos in open_positions:
+            current_yes = float(pos["current_yes_price"] or 0.5)
+            current_price = current_yes if pos["side"] == "yes" else round(1.0 - current_yes, 4)
+            contracts = int(pos["contracts"])
+            entry_price = float(pos["entry_price"])
+            mtm_value = contracts * current_price
+            entry_value = contracts * entry_price
+            positions_value += mtm_value
+            unrealized_pnl += mtm_value - entry_value
+
         total_value = cash + positions_value
         pnl = total_value - settings.starting_balance
         pnl_pct = (pnl / settings.starting_balance) * 100 if settings.starting_balance else 0
@@ -80,9 +114,9 @@ class PaperPortfolio:
             positions_value=positions_value,
             total_value=total_value,
             realized_pnl=float(realized or 0),
-            unrealized_pnl=positions_value,
+            unrealized_pnl=unrealized_pnl,
             pnl_percent=round(pnl_pct, 4),
-            open_positions=int(open_count or 0),
+            open_positions=len(open_positions),
             starting_balance=settings.starting_balance,
         )
 
