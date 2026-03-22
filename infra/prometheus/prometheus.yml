@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "paper-broker"
+    static_configs:
+      - targets: ["paper-broker:8001"]
+    metrics_path: "/metrics"
+
+  - job_name: "agent-core"
+    static_configs:
+      - targets: ["agent-core:9090"]
+    metrics_path: "/metrics"
+
+  - job_name: "kalshi-fetcher"
+    static_configs:
+      - targets: ["kalshi-fetcher:9090"]
+    metrics_path: "/metrics"
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

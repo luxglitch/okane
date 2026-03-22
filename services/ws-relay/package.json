@@ -1,0 +1,21 @@
+{
+  "name": "ws-relay",
+  "version": "0.1.0",
+  "description": "WebSocket relay for Okane — bridges Redis Pub/Sub to frontend clients",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "pino": "^9.0.0",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

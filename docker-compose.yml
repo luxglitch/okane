@@ -1,0 +1,265 @@
+name: okane
+
+networks:
+  okane-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  chroma_data:
+  redis_data:
+  grafana_data:
+  prometheus_data:
+  llamacpp_models:
+
+services:
+  # ─── Infrastructure ───────────────────────────────────────────────────────
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: okane-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-okane}
+      POSTGRES_USER: ${POSTGRES_USER:-okane}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - okane-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-okane} -d ${POSTGRES_DB:-okane}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: okane-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - okane-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: okane-chromadb
+    restart: unless-stopped
+    environment:
+      CHROMA_SERVER_AUTHN_CREDENTIALS: ""
+      CHROMA_SERVER_AUTHN_PROVIDER: ""
+      ANONYMIZED_TELEMETRY: "false"
+    volumes:
+      - chroma_data:/chroma/chroma
+    networks:
+      - okane-net
+    healthcheck:
+      test: ["CMD-SHELL", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ─── Data Services ─────────────────────────────────────────────────────────
+
+  kalshi-fetcher:
+    build:
+      context: ./services/kalshi-fetcher
+      dockerfile: Dockerfile
+    container_name: okane-kalshi-fetcher
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - okane-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Paper Broker ──────────────────────────────────────────────────────────
+
+  paper-broker:
+    build:
+      context: ./services/paper-broker
+      dockerfile: Dockerfile
+    container_name: okane-paper-broker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - okane-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')\" 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── Agent Core ────────────────────────────────────────────────────────────
+
+  agent-core:
+    build:
+      context: ./services/agent-core
+      dockerfile: Dockerfile
+    container_name: okane-agent-core
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+      PAPER_BROKER_URL: http://paper-broker:8001
+    networks:
+      - okane-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      paper-broker:
+        condition: service_healthy
+
+  # ─── WebSocket Relay ───────────────────────────────────────────────────────
+
+  ws-relay:
+    build:
+      context: ./services/ws-relay
+      dockerfile: Dockerfile
+    container_name: okane-ws-relay
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      WS_PORT: "3001"
+    networks:
+      - okane-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(3001, '127.0.0.1', function(){ process.exit(0) }).on('error', function(){ process.exit(1) })\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Frontend ──────────────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    container_name: okane-frontend
+    restart: unless-stopped
+    networks:
+      - okane-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── Nginx ─────────────────────────────────────────────────────────────────
+
+  nginx:
+    image: nginx:alpine
+    container_name: okane-nginx
+    restart: unless-stopped
+    ports:
+      - "7823:80"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - okane-net
+    depends_on:
+      frontend:
+        condition: service_healthy
+      paper-broker:
+        condition: service_healthy
+      ws-relay:
+        condition: service_healthy
+
+  # ─── llama.cpp Server (optional local LLM) ────────────────────────────────
+  # To enable: set LLM_PROVIDER=llamacpp in .env, then:
+  #   docker compose --profile llamacpp up
+  # Download a model first and set LLAMACPP_MODEL_PATH in .env:
+  #   e.g. docker compose run --rm llamacpp ./models/download-model.sh
+  llamacpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: okane-llamacpp
+    restart: unless-stopped
+    profiles: [llamacpp]
+    volumes:
+      - llamacpp_models:/models
+    command: >
+      -m /models/${LLAMACPP_MODEL_FILE:-model.gguf}
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size ${LLAMACPP_CTX_SIZE:-4096}
+      --threads ${LLAMACPP_THREADS:-4}
+      --n-gpu-layers ${LLAMACPP_GPU_LAYERS:-0}
+    networks:
+      - okane-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── Monitoring ────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: okane-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      - okane-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: okane-grafana
+    restart: unless-stopped
+    ports:
+      - "7824:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - okane-net
+    depends_on:
+      - prometheus

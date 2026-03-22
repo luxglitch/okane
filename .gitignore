@@ -1,0 +1,42 @@
+# Secrets — never commit these
+.env
+*.pem
+*.key
+*.p8
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.uv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Docker volumes / local data
+postgres_data/
+redis_data/
+chroma_data/
+grafana_data/
+prometheus_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
