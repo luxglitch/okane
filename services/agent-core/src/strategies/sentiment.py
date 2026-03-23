@@ -60,7 +60,7 @@ class SentimentStrategy(BaseStrategy):
 
         net_score = bullish_score - bearish_score
 
-        if abs(net_score) < 1.0:
+        if abs(net_score) < 0.5:
             return None  # Too neutral — no signal
 
         # Compare sentiment bias against current market price

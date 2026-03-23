@@ -16,7 +16,7 @@ from .base import BaseStrategy, StrategySignal
 
 log = structlog.get_logger()
 
-Z_SCORE_THRESHOLD = 1.5
+Z_SCORE_THRESHOLD = 1.0      # relaxed so more mean-reversion signals fire
 MIN_HISTORY_POINTS = 20
 MIN_YES_PRICE = 0.10
 MAX_YES_PRICE = 0.90
@@ -25,7 +25,7 @@ MAX_YES_PRICE = 0.90
 MAX_BET_PRICE = 0.45
 # Only trade in the sweet spot: far enough out for mean reversion to work,
 # close enough that the signal is still relevant.
-MIN_HOURS_TO_EXPIRY = 8.0
+MIN_HOURS_TO_EXPIRY = 4.0    # include more markets
 MAX_HOURS_TO_EXPIRY = 48.0
 
 

@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Agent behavior
     agent_cycle_seconds: int = 60
-    min_signal_confidence: float = 0.65
+    min_signal_confidence: float = 0.50
     max_position_fraction: float = 0.05
     starting_balance: float = 10000.0
     llm_max_calls_per_minute: int = 10

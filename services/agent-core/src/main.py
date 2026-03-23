@@ -95,7 +95,7 @@ async def agent_loop(
     strategies = [
         SentimentStrategy(),
         StatArbStrategy(),
-        PatternStrategy(chroma_store=chroma),
+        # PatternStrategy(chroma_store=chroma),  # disabled until we have history
         # MomentumStrategy disabled: 8.8% win rate, loses ~$104/trade regardless of direction
     ]
     for s in [arb] + strategies:

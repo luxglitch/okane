@@ -42,22 +42,28 @@ async def fetch_price_history(
     limit: int = 50,
 ) -> list[dict]:
     """Fetch price history. Uses 5-min OHLC when available, falls back to raw snapshots."""
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT bucket AS ts, open, high, low, close, volume
-            FROM market_ohlc_5min
-            WHERE market_ticker = $1
-            ORDER BY bucket DESC
-            LIMIT $2
-            """,
-            ticker,
-            limit,
-        )
+    # Try OHLC table first (may not exist yet); use a separate connection so
+    # a missing-table error doesn't poison the connection used by the fallback.
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT bucket AS ts, open, high, low, close, volume
+                FROM market_ohlc_5min
+                WHERE market_ticker = $1
+                ORDER BY bucket DESC
+                LIMIT $2
+                """,
+                ticker,
+                limit,
+            )
         if len(rows) >= 10:
             return [dict(r) for r in reversed(rows)]
+    except Exception:
+        pass  # Table doesn't exist yet — fall through to raw snapshots
 
-        # Not enough OHLC bars yet — use raw snapshots as synthetic OHLC
+    # Not enough OHLC bars yet — use raw snapshots as synthetic OHLC
+    async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT
